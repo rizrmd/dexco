@@ -1,7 +1,7 @@
 package builtin
 
 import (
-	"github.com/openai/codex/dexco/internal/tools"
+	"github.com/rizrmd/dexco/internal/tools"
 )
 
 func CodingWorkflowHandlers(responder UserInputResponder) []tools.Handler {

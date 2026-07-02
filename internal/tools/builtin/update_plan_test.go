@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openai/codex/dexco/internal/model"
+	"github.com/rizrmd/dexco/internal/model"
 )
 
 // Adapted from Codex core's update_plan handler tests. Codex emits a

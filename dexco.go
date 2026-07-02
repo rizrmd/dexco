@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/openai/codex/dexco/internal/model"
-	permissionstore "github.com/openai/codex/dexco/internal/permissions"
-	"github.com/openai/codex/dexco/internal/runner"
-	"github.com/openai/codex/dexco/internal/session"
-	"github.com/openai/codex/dexco/internal/tools"
-	"github.com/openai/codex/dexco/internal/tools/builtin"
+	"github.com/rizrmd/dexco/internal/model"
+	permissionstore "github.com/rizrmd/dexco/internal/permissions"
+	"github.com/rizrmd/dexco/internal/runner"
+	"github.com/rizrmd/dexco/internal/session"
+	"github.com/rizrmd/dexco/internal/tools"
+	"github.com/rizrmd/dexco/internal/tools/builtin"
 )
 
 type ItemKind = model.ItemKind

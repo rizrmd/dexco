@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openai/codex/dexco"
+	"github.com/rizrmd/dexco"
 )
 
 type profileTool struct {

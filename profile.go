@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/openai/codex/dexco/internal/tools/builtin"
+	"github.com/rizrmd/dexco/internal/tools/builtin"
 )
 
 type Principal struct {

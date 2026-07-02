@@ -1,4 +1,4 @@
-module github.com/openai/codex/dexco
+module github.com/rizrmd/dexco
 
 go 1.26.4
 

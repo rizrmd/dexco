@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/openai/codex/dexco/internal/imageprep"
-	"github.com/openai/codex/dexco/internal/model"
+	"github.com/rizrmd/dexco/internal/imageprep"
+	"github.com/rizrmd/dexco/internal/model"
 )
 
 const (

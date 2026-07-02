@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openai/codex/dexco/internal/events"
-	"github.com/openai/codex/dexco/internal/imageprep"
-	"github.com/openai/codex/dexco/internal/model"
-	"github.com/openai/codex/dexco/internal/runner"
+	"github.com/rizrmd/dexco/internal/events"
+	"github.com/rizrmd/dexco/internal/imageprep"
+	"github.com/rizrmd/dexco/internal/model"
+	"github.com/rizrmd/dexco/internal/runner"
 )
 
 type Config struct {

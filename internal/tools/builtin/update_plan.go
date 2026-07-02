@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/openai/codex/dexco/internal/model"
+	"github.com/rizrmd/dexco/internal/model"
 )
 
 type UpdatePlanHandler struct{}

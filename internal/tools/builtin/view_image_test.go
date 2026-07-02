@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openai/codex/dexco/internal/model"
+	"github.com/rizrmd/dexco/internal/model"
 )
 
 // Adapted from Codex view_image local-image tests. Dexco does not own Codex's

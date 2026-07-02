@@ -5,7 +5,7 @@
 It can be imported as a library:
 
 ```go
-import "github.com/openai/codex/dexco"
+import "github.com/rizrmd/dexco"
 
 router, err := dexco.NewCodingWorkflowRouter(responder)
 runner, err := dexco.NewRunner(modelClient, router)

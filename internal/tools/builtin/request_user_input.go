@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/openai/codex/dexco/internal/model"
+	"github.com/rizrmd/dexco/internal/model"
 )
 
 const (

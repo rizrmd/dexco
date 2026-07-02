@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/openai/codex/dexco/internal/model"
+	"github.com/rizrmd/dexco/internal/model"
 )
 
 func TestRequestUserInputHandlerUsesResponder(t *testing.T) {

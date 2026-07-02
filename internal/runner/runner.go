@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openai/codex/dexco/internal/events"
-	"github.com/openai/codex/dexco/internal/model"
-	permissionstore "github.com/openai/codex/dexco/internal/permissions"
-	"github.com/openai/codex/dexco/internal/tools"
+	"github.com/rizrmd/dexco/internal/events"
+	"github.com/rizrmd/dexco/internal/model"
+	permissionstore "github.com/rizrmd/dexco/internal/permissions"
+	"github.com/rizrmd/dexco/internal/tools"
 )
 
 type EventStream interface {

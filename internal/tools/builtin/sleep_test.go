@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openai/codex/dexco/internal/model"
+	"github.com/rizrmd/dexco/internal/model"
 )
 
 func TestSleepHandlerSpecGuardrailAndInterruptOptIn(t *testing.T) {

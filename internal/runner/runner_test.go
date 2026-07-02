@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openai/codex/dexco/internal/events"
-	"github.com/openai/codex/dexco/internal/model"
-	"github.com/openai/codex/dexco/internal/tools"
+	"github.com/rizrmd/dexco/internal/events"
+	"github.com/rizrmd/dexco/internal/model"
+	"github.com/rizrmd/dexco/internal/tools"
 )
 
 type scriptedModelClient struct {

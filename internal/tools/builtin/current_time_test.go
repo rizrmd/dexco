@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openai/codex/dexco/internal/model"
+	"github.com/rizrmd/dexco/internal/model"
 )
 
 // Adapted from Codex current-time coverage at the handler level. Dexco does not

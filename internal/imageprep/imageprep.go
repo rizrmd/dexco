@@ -18,7 +18,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
-	"github.com/openai/codex/dexco/internal/model"
+	"github.com/rizrmd/dexco/internal/model"
 )
 
 const (

@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/openai/codex/dexco/internal/model"
-	permissionstore "github.com/openai/codex/dexco/internal/permissions"
+	"github.com/rizrmd/dexco/internal/model"
+	permissionstore "github.com/rizrmd/dexco/internal/permissions"
 )
 
 func TestRequestPermissionsHandlerRecordsOnlyGrantedRequestedSubset(t *testing.T) {

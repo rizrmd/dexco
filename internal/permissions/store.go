@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/openai/codex/dexco/internal/model"
+	"github.com/rizrmd/dexco/internal/model"
 )
 
 type turnIDContextKey struct{}
