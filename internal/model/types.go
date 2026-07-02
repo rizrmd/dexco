@@ -679,6 +679,69 @@ type ToolGuardrail struct {
 	// into the library core.
 	PermissionGrantKey string
 	Metadata           map[string]any
+	// ToolPolicyDecision is populated by profile-aware tool wrappers so the
+	// runner can emit structured, non-sensitive authorization decisions without
+	// teaching the low-level router about product profiles.
+	ToolPolicyDecision *ToolPolicyDecision
+	// ProgressHint is safe, handler-provided work text. The runner owns timing;
+	// handlers only describe the observable operation.
+	ProgressHint *ProgressHint
+}
+
+// CapabilityRequirement describes exact capability keys needed for a tool
+// visibility check or a concrete tool call.
+type CapabilityRequirement struct {
+	All []string
+	Any []string
+}
+
+// ToolPolicyDecision is the profile-specific authorization payload emitted on
+// tool approval decision events. ReasonCode must be stable and non-sensitive.
+type ToolPolicyDecision struct {
+	ToolName             string
+	Decision             ApprovalDecision
+	ReasonCode           string
+	RequiredCapabilities CapabilityRequirement
+}
+
+type WorkPhase string
+
+const (
+	WorkPhaseWaitingForModel WorkPhase = "waiting_for_model"
+	WorkPhaseCheckingPolicy  WorkPhase = "checking_policy"
+	WorkPhaseRunningTool     WorkPhase = "running_tool"
+	WorkPhaseRetryingTool    WorkPhase = "retrying_tool"
+	WorkPhaseWaitingParallel WorkPhase = "waiting_parallel_tools"
+	WorkPhaseGeneratingReply WorkPhase = "generating_reply"
+)
+
+type ActiveWork struct {
+	Phase     WorkPhase
+	ToolName  string
+	Label     string
+	Detail    string
+	StartedAt time.Time
+}
+
+type ProgressNarrationConfig struct {
+	Enabled        bool
+	InitialDelay   time.Duration
+	RepeatInterval time.Duration
+}
+
+type ProgressHint struct {
+	Label  string
+	Detail string
+}
+
+type ProgressNarration struct {
+	Phase     WorkPhase
+	Message   string
+	Label     string
+	Detail    string
+	ToolName  string
+	StartedAt time.Time
+	Elapsed   time.Duration
 }
 
 // ToolApprovalRequest is emitted to hooks/reviewers and to client event sinks.
@@ -861,6 +924,7 @@ const (
 	ClientEventPlanUpdate           ClientEventType = "plan_update"
 	ClientEventToolApprovalRequest  ClientEventType = "tool_approval_request"
 	ClientEventToolApprovalDecision ClientEventType = "tool_approval_decision"
+	ClientEventProgressNarration    ClientEventType = "progress_narration"
 	ClientEventTurnCompleted        ClientEventType = "turn_completed"
 	ClientEventResponseEvent        ClientEventType = "response_event"
 	ClientEventModelRetry           ClientEventType = "model_retry"
@@ -884,6 +948,8 @@ type ClientEvent struct {
 	PlanUpdate          *PlanUpdate
 	ToolApprovalRequest *ToolApprovalRequest
 	ApprovalDecision    ApprovalDecision
+	ToolPolicyDecision  *ToolPolicyDecision
+	ProgressNarration   *ProgressNarration
 	ResponseEvent       *ResponseEvent
 	RetryAttempt        int
 	RetryError          string

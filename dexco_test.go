@@ -1511,14 +1511,14 @@ func TestSessionEmitsTurnStartedBeforeSampling(t *testing.T) {
 	}
 }
 
-func TestDefaultRouterExposesBuiltinToolSpecs(t *testing.T) {
+func TestCodingWorkflowRouterExposesBuiltinToolSpecs(t *testing.T) {
 	t.Parallel()
 
-	router, err := dexco.NewDefaultRouter(func(context.Context, string) (string, error) {
+	router, err := dexco.NewCodingWorkflowRouter(func(context.Context, string) (string, error) {
 		return "answer", nil
 	})
 	if err != nil {
-		t.Fatalf("NewDefaultRouter() error = %v", err)
+		t.Fatalf("NewCodingWorkflowRouter() error = %v", err)
 	}
 
 	var names []string
@@ -1579,16 +1579,16 @@ func (c *updatePlanLoopClient) Stream(_ context.Context, prompt dexco.Prompt) (d
 	}, nil
 }
 
-func TestDefaultSessionRunsUpdatePlanRoundTrip(t *testing.T) {
+func TestCodingWorkflowSessionRunsUpdatePlanRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	session, err := dexco.NewDefaultSession(
+	session, err := dexco.NewCodingWorkflowSession(
 		dexco.Config{},
 		&updatePlanLoopClient{t: t},
 		nil,
 	)
 	if err != nil {
-		t.Fatalf("NewDefaultSession() error = %v", err)
+		t.Fatalf("NewCodingWorkflowSession() error = %v", err)
 	}
 
 	sink := &clientEventSink{}
@@ -1658,16 +1658,16 @@ func (c *malformedUpdatePlanLoopClient) Stream(_ context.Context, prompt dexco.P
 	}, nil
 }
 
-func TestDefaultSessionRejectsMalformedUpdatePlanWithoutPlanEvent(t *testing.T) {
+func TestCodingWorkflowSessionRejectsMalformedUpdatePlanWithoutPlanEvent(t *testing.T) {
 	t.Parallel()
 
-	session, err := dexco.NewDefaultSession(
+	session, err := dexco.NewCodingWorkflowSession(
 		dexco.Config{},
 		&malformedUpdatePlanLoopClient{t: t},
 		nil,
 	)
 	if err != nil {
-		t.Fatalf("NewDefaultSession() error = %v", err)
+		t.Fatalf("NewCodingWorkflowSession() error = %v", err)
 	}
 
 	sink := &clientEventSink{}
@@ -1880,11 +1880,11 @@ func (c *requestUserInputLoopClient) Stream(_ context.Context, prompt dexco.Prom
 	}, nil
 }
 
-func TestDefaultSessionRunsRequestUserInputRoundTrip(t *testing.T) {
+func TestCodingWorkflowSessionRunsRequestUserInputRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	var prompted string
-	session, err := dexco.NewDefaultSession(
+	session, err := dexco.NewCodingWorkflowSession(
 		dexco.Config{},
 		&requestUserInputLoopClient{t: t},
 		func(_ context.Context, prompt string) (string, error) {
@@ -1893,7 +1893,7 @@ func TestDefaultSessionRunsRequestUserInputRoundTrip(t *testing.T) {
 		},
 	)
 	if err != nil {
-		t.Fatalf("NewDefaultSession() error = %v", err)
+		t.Fatalf("NewCodingWorkflowSession() error = %v", err)
 	}
 
 	result, err := session.SubmitUserInput(context.Background(), dexco.OpUserInput{
@@ -1962,11 +1962,11 @@ func (c *structuredRequestUserInputLoopClient) Stream(_ context.Context, prompt 
 	}, nil
 }
 
-func TestDefaultSessionRunsStructuredRequestUserInputRoundTrip(t *testing.T) {
+func TestCodingWorkflowSessionRunsStructuredRequestUserInputRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	var prompted string
-	session, err := dexco.NewDefaultSession(
+	session, err := dexco.NewCodingWorkflowSession(
 		dexco.Config{},
 		&structuredRequestUserInputLoopClient{t: t},
 		func(_ context.Context, prompt string) (string, error) {
@@ -1975,7 +1975,7 @@ func TestDefaultSessionRunsStructuredRequestUserInputRoundTrip(t *testing.T) {
 		},
 	)
 	if err != nil {
-		t.Fatalf("NewDefaultSession() error = %v", err)
+		t.Fatalf("NewCodingWorkflowSession() error = %v", err)
 	}
 
 	result, err := session.SubmitUserInput(context.Background(), dexco.OpUserInput{
@@ -2029,7 +2029,7 @@ func (c *viewImageLoopClient) Stream(_ context.Context, prompt dexco.Prompt) (de
 	}, nil
 }
 
-func TestDefaultSessionRunsViewImageToolRoundTrip(t *testing.T) {
+func TestCodingWorkflowSessionRunsViewImageToolRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	baseDir := t.TempDir()

@@ -140,10 +140,26 @@ type ToolGuardrail = model.ToolGuardrail
 type ToolApprovalRequest = model.ToolApprovalRequest
 type PermissionGrantScope = model.PermissionGrantScope
 type PermissionGrant = model.PermissionGrant
+type CapabilityRequirement = model.CapabilityRequirement
+type ToolPolicyDecision = model.ToolPolicyDecision
+type WorkPhase = model.WorkPhase
+type ActiveWork = model.ActiveWork
+type ProgressNarrationConfig = model.ProgressNarrationConfig
+type ProgressHint = model.ProgressHint
+type ProgressNarration = model.ProgressNarration
 
 const (
 	PermissionGrantScopeTurn    = model.PermissionGrantScopeTurn
 	PermissionGrantScopeSession = model.PermissionGrantScopeSession
+)
+
+const (
+	WorkPhaseWaitingForModel = model.WorkPhaseWaitingForModel
+	WorkPhaseCheckingPolicy  = model.WorkPhaseCheckingPolicy
+	WorkPhaseRunningTool     = model.WorkPhaseRunningTool
+	WorkPhaseRetryingTool    = model.WorkPhaseRetryingTool
+	WorkPhaseWaitingParallel = model.WorkPhaseWaitingParallel
+	WorkPhaseGeneratingReply = model.WorkPhaseGeneratingReply
 )
 
 type PermissionGrantStore = permissionstore.Store
@@ -210,6 +226,7 @@ const (
 	ClientEventPlanUpdate           = model.ClientEventPlanUpdate
 	ClientEventToolApprovalRequest  = model.ClientEventToolApprovalRequest
 	ClientEventToolApprovalDecision = model.ClientEventToolApprovalDecision
+	ClientEventProgressNarration    = model.ClientEventProgressNarration
 	ClientEventTurnCompleted        = model.ClientEventTurnCompleted
 	ClientEventResponseEvent        = model.ClientEventResponseEvent
 	ClientEventModelRetry           = model.ClientEventModelRetry
@@ -353,7 +370,8 @@ type RunnerOptions struct {
 	Guardrails         Guardrails
 	// Clock is optional and primarily intended for deterministic telemetry
 	// tests. Nil uses time.Now.
-	Clock func() time.Time
+	Clock             func() time.Time
+	progressNarration ProgressNarrationConfig
 }
 
 type Runner struct {
@@ -665,8 +683,8 @@ type StructuredUserInputResponder = builtin.StructuredUserInputResponder
 
 const MaxSleepDurationMS = builtin.MaxSleepDurationMS
 
-func DefaultHandlers(responder UserInputResponder) []Handler {
-	internalHandlers := builtin.DefaultHandlers(responder)
+func CodingWorkflowHandlers(responder UserInputResponder) []Handler {
+	internalHandlers := builtin.CodingWorkflowHandlers(responder)
 	handlers := make([]Handler, 0, len(internalHandlers))
 	for _, handler := range internalHandlers {
 		handlers = append(handlers, handler)
@@ -674,25 +692,25 @@ func DefaultHandlers(responder UserInputResponder) []Handler {
 	return handlers
 }
 
-func NewDefaultRouter(responder UserInputResponder) (*Router, error) {
-	return NewRouter(DefaultHandlers(responder)...)
+func NewCodingWorkflowRouter(responder UserInputResponder) (*Router, error) {
+	return NewRouter(CodingWorkflowHandlers(responder)...)
 }
 
-func NewDefaultSession(
+func NewCodingWorkflowSession(
 	cfg Config,
 	modelClient ModelClient,
 	responder UserInputResponder,
 ) (*Session, error) {
-	return NewDefaultSessionWithOptions(cfg, modelClient, responder, RunnerOptions{})
+	return NewCodingWorkflowSessionWithOptions(cfg, modelClient, responder, RunnerOptions{})
 }
 
-func NewDefaultSessionWithOptions(
+func NewCodingWorkflowSessionWithOptions(
 	cfg Config,
 	modelClient ModelClient,
 	responder UserInputResponder,
 	options RunnerOptions,
 ) (*Session, error) {
-	router, err := NewDefaultRouter(responder)
+	router, err := NewCodingWorkflowRouter(responder)
 	if err != nil {
 		return nil, err
 	}
@@ -720,8 +738,9 @@ func internalRunnerOptions(options RunnerOptions) runner.Options {
 			ToolLifecycle:      options.Hooks.ToolLifecycle,
 			ReviewToolCall:     options.Hooks.ReviewToolCall,
 		},
-		ParallelTools: options.ParallelTools,
-		Clock:         options.Clock,
+		ParallelTools:     options.ParallelTools,
+		Clock:             options.Clock,
+		ProgressNarration: model.ProgressNarrationConfig(options.progressNarration),
 		Guardrails: runner.Guardrails{
 			ApprovalPolicy:   options.Guardrails.ApprovalPolicy,
 			Reviewer:         reviewer,

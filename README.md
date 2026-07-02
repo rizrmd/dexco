@@ -7,7 +7,7 @@ It can be imported as a library:
 ```go
 import "github.com/openai/codex/dexco"
 
-router, err := dexco.NewDefaultRouter(responder)
+router, err := dexco.NewCodingWorkflowRouter(responder)
 runner, err := dexco.NewRunner(modelClient, router)
 session, err := dexco.NewSession(dexco.Config{Instructions: "Be concise."}, runner)
 

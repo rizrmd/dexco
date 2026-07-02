@@ -50,8 +50,10 @@ type toolDispatchResult struct {
 type inFlightToolDispatcher struct {
 	runner               *Runner
 	turn                 model.Turn
+	sink                 events.Sink
 	pendingInputActivity PendingInputActivityFunc
 	guardrailDenials     *guardrailDenialCircuitBreaker
+	progress             *progressNarrator
 	lock                 sync.RWMutex
 	pending              []inFlightToolCall
 }
@@ -237,8 +239,9 @@ type Options struct {
 	// ParallelTools mirrors Codex's batch behavior: consecutive tool calls that
 	// are explicitly marked parallel-safe may run concurrently, but their results
 	// are replayed to history in model order.
-	ParallelTools bool
-	Guardrails    Guardrails
+	ParallelTools     bool
+	Guardrails        Guardrails
+	ProgressNarration model.ProgressNarrationConfig
 	// Clock exists so Codex timing parity tests can be deterministic. Production
 	// callers should leave it nil and use time.Now.
 	Clock func() time.Time
@@ -481,7 +484,26 @@ func (r *Runner) runSamplingRequest(
 	committedRetryItems := make([]model.Item, 0)
 	for {
 		metrics.BeginSampling()
+		modelStartProgress := newProgressNarrator(
+			r.options.ProgressNarration,
+			sink,
+			turn.ID,
+			r.now,
+		)
+		stopModelStartProgress := func() {}
+		if modelStartProgress != nil {
+			stopModelStartProgress = modelStartProgress.StartWork(
+				ctx,
+				model.WorkPhaseWaitingForModel,
+				model.ProgressHint{Label: "Waiting for model"},
+				"",
+			)
+		}
 		stream, err := r.modelClient.Stream(ctx, prompt)
+		stopModelStartProgress()
+		if modelStartProgress != nil {
+			modelStartProgress.Close()
+		}
 		attempts++
 		if err != nil {
 			metrics.EndSampling()
@@ -615,9 +637,32 @@ func (r *Runner) receiveSamplingAttempt(
 	assistantParser := model.NewAssistantTextParser()
 	var assistantCitation *model.MemoryCitation
 	assistantItemID := ""
+	progress := newProgressNarrator(r.options.ProgressNarration, sink, turn.ID, r.now)
+	if progress != nil {
+		defer progress.Close()
+	}
+	stopModelProgress := func() {}
+	if progress != nil {
+		stopModelProgress = progress.StartWork(
+			ctx,
+			model.WorkPhaseWaitingForModel,
+			model.ProgressHint{Label: "Waiting for model"},
+			"",
+		)
+	}
+	modelProgressStopped := false
+	stopModelProgressOnce := func() {
+		if modelProgressStopped {
+			return
+		}
+		modelProgressStopped = true
+		stopModelProgress()
+	}
 	inFlightTools := newInFlightToolDispatcher(
 		r,
 		turn,
+		sink,
+		progress,
 		turnOptions.PendingInputActivity,
 		guardrailDenials,
 	)
@@ -683,6 +728,7 @@ func (r *Runner) receiveSamplingAttempt(
 			continue
 
 		case model.EventOutputItemAdded:
+			stopModelProgressOnce()
 			if event.ItemID != "" && event.Item != nil && event.Item.Kind == model.ItemAssistantMessage {
 				assistantItemID = event.ItemID
 			}
@@ -699,6 +745,7 @@ func (r *Runner) receiveSamplingAttempt(
 			}
 
 		case model.EventOutputTextDelta:
+			stopModelProgressOnce()
 			if event.ItemID != "" {
 				assistantItemID = event.ItemID
 			}
@@ -711,6 +758,7 @@ func (r *Runner) receiveSamplingAttempt(
 		case model.EventReasoningDelta,
 			model.EventReasoningSummaryDelta,
 			model.EventReasoningContentDelta:
+			stopModelProgressOnce()
 			if event.Delta != "" {
 				metrics.RecordFirstOutput()
 			}
@@ -731,6 +779,7 @@ func (r *Runner) receiveSamplingAttempt(
 			continue
 
 		case model.EventOutputItemDone:
+			stopModelProgressOnce()
 			if event.Item == nil {
 				metrics.EndSampling()
 				return samplingAttemptResult{}, fmt.Errorf("output item done: missing item")
@@ -825,6 +874,7 @@ func (r *Runner) receiveSamplingAttempt(
 			}
 
 		case model.EventCompleted:
+			stopModelProgressOnce()
 			completedSeen = true
 			metrics.EndSampling()
 			if event.TokenUsage != nil {
@@ -1057,14 +1107,18 @@ func isNonRetryableModelError(err error) bool {
 func newInFlightToolDispatcher(
 	runner *Runner,
 	turn model.Turn,
+	sink events.Sink,
+	progress *progressNarrator,
 	pendingInputActivity PendingInputActivityFunc,
 	guardrailDenials *guardrailDenialCircuitBreaker,
 ) *inFlightToolDispatcher {
 	return &inFlightToolDispatcher{
 		runner:               runner,
 		turn:                 turn,
+		sink:                 sink,
 		pendingInputActivity: pendingInputActivity,
 		guardrailDenials:     guardrailDenials,
+		progress:             progress,
 	}
 }
 
@@ -1112,6 +1166,13 @@ func (d *inFlightToolDispatcher) Drain() ([]toolDispatchResult, error) {
 	return results, nil
 }
 
+func (d *inFlightToolDispatcher) Close() {
+	if d == nil || d.progress == nil {
+		return
+	}
+	d.progress.Close()
+}
+
 func abortedToolDispatchResult(call model.ToolCall) toolDispatchResult {
 	return toolDispatchResult{
 		item: model.ToolResultItem(model.ToolResult{
@@ -1146,6 +1207,8 @@ func (d *inFlightToolDispatcher) dispatch(
 		ctx,
 		toolCtx,
 		d.turn,
+		d.sink,
+		d.progress,
 		call,
 		d.guardrailDenials,
 	)
@@ -1255,13 +1318,15 @@ func (r *Runner) dispatchOneToolCall(
 	turn model.Turn,
 	call model.ToolCall,
 ) (toolDispatchResult, error) {
-	return r.dispatchOneToolCallWithToolContext(ctx, ctx, turn, call, nil)
+	return r.dispatchOneToolCallWithToolContext(ctx, ctx, turn, nil, nil, call, nil)
 }
 
 func (r *Runner) dispatchOneToolCallWithToolContext(
 	ctx context.Context,
 	toolCtx context.Context,
 	turn model.Turn,
+	sink events.Sink,
+	progress *progressNarrator,
 	call model.ToolCall,
 	guardrailDenials *guardrailDenialCircuitBreaker,
 ) (toolDispatchResult, error) {
@@ -1283,7 +1348,17 @@ func (r *Runner) dispatchOneToolCallWithToolContext(
 	}
 	// Codex guardrail parity: normalize/mutate the call first, then classify and
 	// approve it before invoking the side-effecting handler.
-	deniedResult, clientEvents, err := r.reviewToolCall(ctx, turn, call)
+	stopPolicyProgress := func() {}
+	if progress != nil {
+		stopPolicyProgress = progress.StartWork(
+			ctx,
+			model.WorkPhaseCheckingPolicy,
+			model.ProgressHint{Label: "Checking access"},
+			call.Name,
+		)
+	}
+	deniedResult, clientEvents, guardrail, err := r.reviewToolCall(ctx, turn, call)
+	stopPolicyProgress()
 	if err != nil {
 		return toolDispatchResult{}, err
 	}
@@ -1303,6 +1378,11 @@ func (r *Runner) dispatchOneToolCallWithToolContext(
 		}, nil
 	}
 	guardrailDenials.recordNonDenial()
+	stopProgress := func() {}
+	if progress != nil && guardrail != nil {
+		stopProgress = progress.StartTool(ctx, call, guardrail.ProgressHint)
+	}
+	defer stopProgress()
 	if err := r.notifyToolLifecycle(ctx, turn, model.ToolLifecycleEvent{
 		Phase: model.ToolLifecycleStart,
 		Call:  call,
@@ -1384,10 +1464,10 @@ func (r *Runner) reviewToolCall(
 	ctx context.Context,
 	turn model.Turn,
 	call model.ToolCall,
-) (*model.ToolResult, []model.ClientEvent, error) {
+) (*model.ToolResult, []model.ClientEvent, *model.ToolGuardrail, error) {
 	guardrail, err := r.router.Guardrail(ctx, call)
 	if err != nil {
-		return nil, nil, fmt.Errorf("tool guardrail %q: %w", call.Name, err)
+		return nil, nil, nil, fmt.Errorf("tool guardrail %q: %w", call.Name, err)
 	}
 	policy := r.options.Guardrails.ApprovalPolicy
 	if policy == "" {
@@ -1396,20 +1476,21 @@ func (r *Runner) reviewToolCall(
 
 	needsApproval, deniedReason, err := approvalRequirement(policy, guardrail)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	request := toolApprovalRequest(turn, call, guardrail, policy)
 	if deniedReason != "" {
 		request.Reason = deniedReason
-		result := deniedToolResult(call, deniedReason)
+		result := deniedToolResultForRequest(call, request, deniedReason)
 		return &result, []model.ClientEvent{
 			approvalDecisionEvent(turn.ID, request, model.ApprovalDecisionDenied),
-		}, nil
+		}, nil, nil
 	}
 	if !needsApproval {
-		return nil, nil, nil
+		return nil, nil, &guardrail, nil
 	}
 	if guardrail.PermissionGrantKey != "" &&
+		r.options.Guardrails.PermissionGrants != nil &&
 		r.options.Guardrails.PermissionGrants.Has(turn.ID, guardrail.PermissionGrantKey) &&
 		!r.options.Guardrails.PermissionGrants.StrictAutoReviewForGrant(turn.ID, guardrail.PermissionGrantKey) {
 		// Codex lets request_permissions grants preapprove later shell-like
@@ -1418,7 +1499,7 @@ func (r *Runner) reviewToolCall(
 		// the concrete action through Guardian auto-review. Dexco preserves that
 		// nuance by bypassing only non-strict grants and otherwise continuing
 		// through the normal hook/reviewer/client-event path.
-		return nil, nil, nil
+		return nil, nil, &guardrail, nil
 	}
 
 	// Emit approval lifecycle events separately from normal tool results so UI
@@ -1434,48 +1515,54 @@ func (r *Runner) reviewToolCall(
 	if r.options.Hooks.ReviewToolCall != nil {
 		decision, err := r.options.Hooks.ReviewToolCall(ctx, turn, request)
 		if err != nil {
-			return nil, nil, fmt.Errorf("review tool call hook %q: %w", call.Name, err)
+			return nil, nil, nil, fmt.Errorf("review tool call hook %q: %w", call.Name, err)
 		}
-		result, decided, err := approvalDecisionResult(call, decision, "permission hook denied tool call")
+		result, decided, err := approvalDecisionResult(call, request, decision, "permission hook denied tool call")
 		if decided {
 			clientEvents = append(clientEvents, approvalDecisionEvent(turn.ID, request, decision))
 		}
 		if err != nil || decided {
-			return result, clientEvents, err
+			if result != nil || err != nil {
+				return result, clientEvents, nil, err
+			}
+			return nil, clientEvents, &guardrail, nil
 		}
 	}
 
 	if r.options.Guardrails.Reviewer == nil {
 		// Safe default for opt-in guardrails: if policy says approval is required
 		// and nobody approves, do not run the tool.
-		result := deniedToolResult(call, "approval required but no reviewer approved the tool call")
+		result := deniedToolResultForRequest(call, request, "approval required but no reviewer approved the tool call")
 		clientEvents = append(
 			clientEvents,
 			approvalDecisionEvent(turn.ID, request, model.ApprovalDecisionDenied),
 		)
-		return &result, clientEvents, nil
+		return &result, clientEvents, nil, nil
 	}
 
 	decision, err := r.options.Guardrails.Reviewer(ctx, turn, request)
 	if err != nil {
-		return nil, nil, fmt.Errorf("review tool call %q: %w", call.Name, err)
+		return nil, nil, nil, fmt.Errorf("review tool call %q: %w", call.Name, err)
 	}
-	result, decided, err := approvalDecisionResult(call, decision, "reviewer denied tool call")
+	result, decided, err := approvalDecisionResult(call, request, decision, "reviewer denied tool call")
 	if decided {
 		clientEvents = append(clientEvents, approvalDecisionEvent(turn.ID, request, decision))
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if !decided {
-		result := deniedToolResult(call, "reviewer did not approve the tool call")
+		result := deniedToolResultForRequest(call, request, "reviewer did not approve the tool call")
 		clientEvents = append(
 			clientEvents,
 			approvalDecisionEvent(turn.ID, request, model.ApprovalDecisionDenied),
 		)
-		return &result, clientEvents, nil
+		return &result, clientEvents, nil, nil
 	}
-	return result, clientEvents, nil
+	if result != nil {
+		return result, clientEvents, nil, nil
+	}
+	return nil, clientEvents, &guardrail, nil
 }
 
 func toolApprovalRequest(
@@ -1498,11 +1585,24 @@ func approvalDecisionEvent(
 	request model.ToolApprovalRequest,
 	decision model.ApprovalDecision,
 ) model.ClientEvent {
+	var toolPolicyDecision *model.ToolPolicyDecision
+	if request.Guardrail.ToolPolicyDecision != nil {
+		decisionPayload := cloneToolPolicyDecision(*request.Guardrail.ToolPolicyDecision)
+		decisionPayload.Decision = decision
+		if decisionPayload.ToolName == "" {
+			decisionPayload.ToolName = request.Call.Name
+		}
+		if decision == model.ApprovalDecisionDenied && decisionPayload.ReasonCode == "" {
+			decisionPayload.ReasonCode = "policy_denied"
+		}
+		toolPolicyDecision = &decisionPayload
+	}
 	return model.ClientEvent{
 		Type:                model.ClientEventToolApprovalDecision,
 		TurnID:              turnID,
 		ToolApprovalRequest: &request,
 		ApprovalDecision:    decision,
+		ToolPolicyDecision:  toolPolicyDecision,
 	}
 }
 
@@ -1530,6 +1630,7 @@ func approvalRequirement(
 
 func approvalDecisionResult(
 	call model.ToolCall,
+	request model.ToolApprovalRequest,
 	decision model.ApprovalDecision,
 	deniedReason string,
 ) (*model.ToolResult, bool, error) {
@@ -1537,7 +1638,7 @@ func approvalDecisionResult(
 	case model.ApprovalDecisionApproved:
 		return nil, true, nil
 	case model.ApprovalDecisionDenied:
-		result := deniedToolResult(call, deniedReason)
+		result := deniedToolResultForRequest(call, request, deniedReason)
 		return &result, true, nil
 	case model.ApprovalDecisionNoDecision, "":
 		return nil, false, nil
@@ -1571,12 +1672,282 @@ func deniedToolResult(call model.ToolCall, reason string) model.ToolResult {
 	}
 }
 
+func deniedToolResultForRequest(
+	call model.ToolCall,
+	request model.ToolApprovalRequest,
+	reason string,
+) model.ToolResult {
+	if request.Guardrail.ToolPolicyDecision != nil {
+		return model.ToolResult{
+			CallID:  call.CallID,
+			Name:    call.Name,
+			Output:  "This action is not allowed for the current user.",
+			Success: false,
+		}
+	}
+	return deniedToolResult(call, reason)
+}
+
 func emitClientEvent(ctx context.Context, sink events.Sink, event model.ClientEvent) error {
 	clientSink, ok := sink.(events.ClientEventSink)
 	if !ok {
 		return nil
 	}
 	return clientSink.OnClientEvent(ctx, event)
+}
+
+type progressNarrator struct {
+	cfg    model.ProgressNarrationConfig
+	sink   events.Sink
+	turnID string
+	now    func() time.Time
+
+	mu         sync.Mutex
+	generation int
+	closed     bool
+	active     map[string]activeProgress
+}
+
+type activeProgress struct {
+	call      model.ToolCall
+	phase     model.WorkPhase
+	hint      model.ProgressHint
+	startedAt time.Time
+}
+
+func newProgressNarrator(
+	cfg model.ProgressNarrationConfig,
+	sink events.Sink,
+	turnID string,
+	now func() time.Time,
+) *progressNarrator {
+	if !cfg.Enabled || cfg.InitialDelay <= 0 {
+		return nil
+	}
+	if _, ok := sink.(events.ClientEventSink); !ok {
+		return nil
+	}
+	if now == nil {
+		now = time.Now
+	}
+	return &progressNarrator{
+		cfg:    cfg,
+		sink:   sink,
+		turnID: turnID,
+		now:    now,
+		active: make(map[string]activeProgress),
+	}
+}
+
+func (n *progressNarrator) StartTool(
+	ctx context.Context,
+	call model.ToolCall,
+	hint *model.ProgressHint,
+) func() {
+	progressHint := model.ProgressHint{Label: "Running tool"}
+	if hint != nil {
+		progressHint = *hint
+	}
+	return n.start(ctx, model.WorkPhaseRunningTool, call, progressHint)
+}
+
+func (n *progressNarrator) StartWork(
+	ctx context.Context,
+	phase model.WorkPhase,
+	hint model.ProgressHint,
+	toolName string,
+) func() {
+	return n.start(ctx, phase, model.ToolCall{Name: toolName}, hint)
+}
+
+func (n *progressNarrator) start(
+	ctx context.Context,
+	phase model.WorkPhase,
+	call model.ToolCall,
+	hint model.ProgressHint,
+) func() {
+	if n == nil {
+		return func() {}
+	}
+	if phase == "" {
+		phase = model.WorkPhaseRunningTool
+	}
+	progressHint := sanitizeProgressHint(hint)
+	key := call.CallID
+	if key == "" {
+		key = call.Name
+	}
+	if key == "" {
+		key = string(phase)
+	}
+
+	n.mu.Lock()
+	if n.closed {
+		n.mu.Unlock()
+		return func() {}
+	}
+	n.active[key] = activeProgress{
+		call:      cloneToolCall(call),
+		phase:     phase,
+		hint:      progressHint,
+		startedAt: n.now(),
+	}
+	n.generation++
+	generation := n.generation
+	n.mu.Unlock()
+
+	n.schedule(ctx, generation, n.cfg.InitialDelay)
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			n.mu.Lock()
+			if n.closed {
+				n.mu.Unlock()
+				return
+			}
+			delete(n.active, key)
+			n.generation++
+			generation := n.generation
+			hasActive := len(n.active) > 0
+			n.mu.Unlock()
+			if hasActive {
+				n.schedule(ctx, generation, n.cfg.InitialDelay)
+			}
+		})
+	}
+}
+
+func (n *progressNarrator) Close() {
+	if n == nil {
+		return
+	}
+	n.mu.Lock()
+	n.closed = true
+	n.generation++
+	n.active = nil
+	n.mu.Unlock()
+}
+
+func (n *progressNarrator) schedule(ctx context.Context, generation int, delay time.Duration) {
+	if n == nil || delay <= 0 {
+		return
+	}
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+
+		for {
+			event, ok := n.event(generation)
+			if !ok {
+				return
+			}
+			if err := emitClientEvent(ctx, n.sink, event); err != nil {
+				return
+			}
+			if n.cfg.RepeatInterval <= 0 {
+				return
+			}
+			timer.Reset(n.cfg.RepeatInterval)
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+		}
+	}()
+}
+
+func (n *progressNarrator) event(generation int) (model.ClientEvent, bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.closed || generation != n.generation || len(n.active) == 0 {
+		return model.ClientEvent{}, false
+	}
+
+	active := make([]activeProgress, 0, len(n.active))
+	for _, item := range n.active {
+		active = append(active, item)
+	}
+	progress := progressNarrationForActive(active, n.now())
+	return model.ClientEvent{
+		Type:              model.ClientEventProgressNarration,
+		TurnID:            n.turnID,
+		ProgressNarration: &progress,
+	}, true
+}
+
+func progressNarrationForActive(active []activeProgress, now time.Time) model.ProgressNarration {
+	if len(active) == 1 {
+		item := active[0]
+		message := progressMessage(item.hint)
+		return model.ProgressNarration{
+			Phase:     item.phase,
+			Message:   message,
+			Label:     item.hint.Label,
+			Detail:    item.hint.Detail,
+			ToolName:  item.call.Name,
+			StartedAt: item.startedAt,
+			Elapsed:   now.Sub(item.startedAt),
+		}
+	}
+
+	startedAt := active[0].startedAt
+	sharedLabel := active[0].hint.Label
+	allShareLabel := sharedLabel != ""
+	for _, item := range active[1:] {
+		if item.startedAt.Before(startedAt) {
+			startedAt = item.startedAt
+		}
+		if item.hint.Label != sharedLabel {
+			allShareLabel = false
+		}
+	}
+	message := fmt.Sprintf("Running %d tasks", len(active))
+	label := ""
+	if allShareLabel {
+		message = sharedLabel
+		label = sharedLabel
+	}
+	return model.ProgressNarration{
+		Phase:     model.WorkPhaseWaitingParallel,
+		Message:   truncateProgressText(message, 96),
+		Label:     truncateProgressText(label, 48),
+		StartedAt: startedAt,
+		Elapsed:   now.Sub(startedAt),
+	}
+}
+
+func sanitizeProgressHint(hint model.ProgressHint) model.ProgressHint {
+	hint.Label = truncateProgressText(strings.TrimSpace(hint.Label), 48)
+	hint.Detail = truncateProgressText(strings.TrimSpace(hint.Detail), 64)
+	if hint.Label == "" {
+		hint.Label = "Running tool"
+	}
+	return hint
+}
+
+func progressMessage(hint model.ProgressHint) string {
+	if hint.Detail == "" {
+		return truncateProgressText(hint.Label, 96)
+	}
+	return truncateProgressText(strings.TrimSpace(hint.Label+" "+hint.Detail), 96)
+}
+
+func truncateProgressText(text string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit])
 }
 
 type bufferedSink struct {
@@ -1697,6 +2068,14 @@ func cloneClientEvent(event model.ClientEvent) model.ClientEvent {
 		toolApprovalRequest := cloneToolApprovalRequest(*event.ToolApprovalRequest)
 		event.ToolApprovalRequest = &toolApprovalRequest
 	}
+	if event.ToolPolicyDecision != nil {
+		toolPolicyDecision := cloneToolPolicyDecision(*event.ToolPolicyDecision)
+		event.ToolPolicyDecision = &toolPolicyDecision
+	}
+	if event.ProgressNarration != nil {
+		progressNarration := *event.ProgressNarration
+		event.ProgressNarration = &progressNarration
+	}
 	if event.ResponseEvent != nil {
 		responseEvent := cloneResponseEvent(*event.ResponseEvent)
 		event.ResponseEvent = &responseEvent
@@ -1718,7 +2097,21 @@ func cloneToolGuardrail(guardrail model.ToolGuardrail) model.ToolGuardrail {
 		}
 		guardrail.Metadata = metadata
 	}
+	if guardrail.ToolPolicyDecision != nil {
+		decision := cloneToolPolicyDecision(*guardrail.ToolPolicyDecision)
+		guardrail.ToolPolicyDecision = &decision
+	}
+	if guardrail.ProgressHint != nil {
+		progressHint := *guardrail.ProgressHint
+		guardrail.ProgressHint = &progressHint
+	}
 	return guardrail
+}
+
+func cloneToolPolicyDecision(decision model.ToolPolicyDecision) model.ToolPolicyDecision {
+	decision.RequiredCapabilities.All = append([]string(nil), decision.RequiredCapabilities.All...)
+	decision.RequiredCapabilities.Any = append([]string(nil), decision.RequiredCapabilities.Any...)
+	return decision
 }
 
 func cloneResponseEvent(event model.ResponseEvent) model.ResponseEvent {
