@@ -370,8 +370,11 @@ type RunnerOptions struct {
 	Guardrails         Guardrails
 	// Clock is optional and primarily intended for deterministic telemetry
 	// tests. Nil uses time.Now.
-	Clock             func() time.Time
-	progressNarration ProgressNarrationConfig
+	Clock func() time.Time
+	// ProgressNarration enables delayed, safe progress events for slow model
+	// waits and tool executions. The runner owns timing; handlers provide only
+	// non-sensitive ProgressHint metadata through their guardrail payloads.
+	ProgressNarration ProgressNarrationConfig
 }
 
 type Runner struct {
@@ -740,7 +743,7 @@ func internalRunnerOptions(options RunnerOptions) runner.Options {
 		},
 		ParallelTools:     options.ParallelTools,
 		Clock:             options.Clock,
-		ProgressNarration: model.ProgressNarrationConfig(options.progressNarration),
+		ProgressNarration: model.ProgressNarrationConfig(options.ProgressNarration),
 		Guardrails: runner.Guardrails{
 			ApprovalPolicy:   options.Guardrails.ApprovalPolicy,
 			Reviewer:         reviewer,

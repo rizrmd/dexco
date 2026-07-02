@@ -104,6 +104,99 @@ func (echoTool) Call(_ context.Context, call dexco.ToolCall) (dexco.ToolResult, 
 	}, nil
 }
 
+type slowProgressTool struct {
+	delay time.Duration
+}
+
+func (t slowProgressTool) Name() string {
+	return "inventory_search"
+}
+
+func (t slowProgressTool) Spec() dexco.ToolSpec {
+	return dexco.ToolSpec{
+		Name:        "inventory_search",
+		Description: "Searches live inventory.",
+		Parameters: map[string]any{
+			"type": "object",
+		},
+	}
+}
+
+func (t slowProgressTool) Guardrail(context.Context, dexco.ToolCall) (dexco.ToolGuardrail, error) {
+	return dexco.ToolGuardrail{
+		Risk:                dexco.ToolRiskReadOnly,
+		ApprovalRequirement: dexco.ApprovalRequirementNone,
+		Reason:              "live inventory read",
+		ProgressHint: &dexco.ProgressHint{
+			Label:  "Mengecek stok",
+			Detail: "inventory live",
+		},
+	}, nil
+}
+
+func (t slowProgressTool) Call(ctx context.Context, call dexco.ToolCall) (dexco.ToolResult, error) {
+	if t.delay > 0 {
+		timer := time.NewTimer(t.delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return dexco.ToolResult{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return dexco.ToolResult{
+		CallID:  call.CallID,
+		Name:    call.Name,
+		Output:  "ready",
+		Success: true,
+	}, nil
+}
+
+func TestRunnerOptionsProgressNarrationEmitsForSlowTool(t *testing.T) {
+	t.Parallel()
+
+	router, err := dexco.NewRouter(slowProgressTool{delay: 30 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
+	client := &profileClient{
+		t: t,
+		call: dexco.ToolCall{
+			CallID:    "slow-call",
+			Name:      "inventory_search",
+			Arguments: json.RawMessage(`{}`),
+		},
+	}
+	turnRunner, err := dexco.NewRunnerWithOptions(client, router, dexco.RunnerOptions{
+		ProgressNarration: dexco.ProgressNarrationConfig{
+			Enabled:      true,
+			InitialDelay: 5 * time.Millisecond,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewRunnerWithOptions() error = %v", err)
+	}
+	sink := &lockedClientEventSink{}
+	if _, err := turnRunner.RunTurn(context.Background(), dexco.Turn{
+		ID: "progress-runner",
+		History: []dexco.Item{
+			dexco.UserInputItem("cek stok"),
+		},
+	}, sink); err != nil {
+		t.Fatalf("RunTurn() error = %v", err)
+	}
+	progress := progressEvent(sink.Events())
+	if progress == nil {
+		t.Fatalf("missing progress event: %#v", sink.Events())
+	}
+	if progress.Phase != dexco.WorkPhaseRunningTool ||
+		progress.Label != "Mengecek stok" ||
+		progress.Detail != "inventory live" ||
+		progress.ToolName != "inventory_search" {
+		t.Fatalf("progress = %#v", progress)
+	}
+}
+
 func TestLibrarySessionRunsToolLoop(t *testing.T) {
 	t.Parallel()
 

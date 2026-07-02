@@ -184,7 +184,7 @@ func NewSessionForProfile(
 		}
 	}
 	options.Hooks = profileHooks(snapshot, options.Hooks)
-	options.progressNarration = snapshot.ProgressNarration
+	options.ProgressNarration = snapshot.ProgressNarration
 	turnRunner, err := NewRunnerWithOptions(modelClient, router, options)
 	if err != nil {
 		return nil, err
