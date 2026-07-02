@@ -178,6 +178,81 @@ func (t *stubExecTool) Call(_ context.Context, call model.ToolCall) (model.ToolR
 	}, nil
 }
 
+type finalResponseTool struct {
+	name          string
+	output        string
+	finalResponse string
+	success       bool
+	calls         []model.ToolCall
+}
+
+func (t *finalResponseTool) Name() string {
+	if t.name != "" {
+		return t.name
+	}
+	return "final_response_tool"
+}
+
+func (t *finalResponseTool) Spec() model.ToolSpec {
+	return model.ToolSpec{
+		Name:        t.Name(),
+		Description: "returns a final response",
+		Parameters: map[string]any{
+			"type": "object",
+		},
+	}
+}
+
+func (t *finalResponseTool) Call(_ context.Context, call model.ToolCall) (model.ToolResult, error) {
+	t.calls = append(t.calls, call)
+	return model.ToolResult{
+		CallID:        call.CallID,
+		Name:          call.Name,
+		Output:        t.output,
+		Success:       t.success,
+		FinalResponse: t.finalResponse,
+	}, nil
+}
+
+type finalResponseModelClient struct {
+	calls    int
+	toolName string
+}
+
+func (c *finalResponseModelClient) Stream(_ context.Context, _ model.Prompt) (EventStream, error) {
+	c.calls++
+	if c.calls == 1 {
+		return &sliceStream{
+			events: []model.ResponseEvent{
+				{
+					Type: model.EventOutputItemDone,
+					Item: &model.Item{
+						Kind: model.ItemToolCall,
+						ToolCall: &model.ToolCall{
+							CallID:    "final-call",
+							Name:      c.toolName,
+							Arguments: json.RawMessage(`{}`),
+						},
+					},
+				},
+				{Type: model.EventCompleted, EndTurn: boolPtr(true)},
+			},
+		}, nil
+	}
+	return &sliceStream{
+		events: []model.ResponseEvent{
+			{
+				Type: model.EventOutputItemDone,
+				Item: func() *model.Item {
+					item := model.AssistantMessageItem("follow-up after tool")
+					return &item
+				}(),
+			},
+			{Type: model.EventCompleted, EndTurn: boolPtr(true)},
+		},
+	}, nil
+}
+
 type captureSink struct {
 	text         strings.Builder
 	reasoning    strings.Builder
@@ -275,6 +350,110 @@ func TestRunnerExecutesToolLoopUntilAssistantFinishes(t *testing.T) {
 	}
 	if !containsAssistantMessage(result.History, "Done after tool call") {
 		t.Fatalf("history missing final assistant message: %#v", result.History)
+	}
+}
+
+func TestRunnerStopsAfterSuccessfulFinalResponseToolResult(t *testing.T) {
+	t.Parallel()
+
+	tool := &finalResponseTool{
+		output:        "raw tool output",
+		finalResponse: "send this reply",
+		success:       true,
+	}
+	modelClient := &finalResponseModelClient{toolName: tool.Name()}
+	router, err := tools.NewRouter(tool)
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
+	var lifecycleEvents []model.ToolLifecycleEvent
+	runner, err := NewWithOptions(modelClient, router, Options{
+		Hooks: Hooks{
+			ToolLifecycle: func(_ context.Context, _ model.Turn, event model.ToolLifecycleEvent) error {
+				lifecycleEvents = append(lifecycleEvents, event)
+				return nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions() error = %v", err)
+	}
+
+	sink := &captureSink{}
+	result, err := runner.RunTurn(context.Background(), model.Turn{
+		ID:      "turn-final-response",
+		History: []model.Item{model.UserInputItem("send the final reply")},
+		Status:  model.TurnStatusRunning,
+	}, sink)
+	if err != nil {
+		t.Fatalf("RunTurn() error = %v", err)
+	}
+
+	if modelClient.calls != 1 {
+		t.Fatalf("model calls = %d, want 1", modelClient.calls)
+	}
+	if result.FinalMessage != "send this reply" {
+		t.Fatalf("FinalMessage = %q, want send this reply", result.FinalMessage)
+	}
+	if !containsToolResult(result.History, "final-call", "raw tool output") {
+		t.Fatalf("history missing tool result: %#v", result.History)
+	}
+	if !containsAssistantMessage(result.History, "send this reply") {
+		t.Fatalf("history missing final assistant message: %#v", result.History)
+	}
+	if len(sink.toolResults) != 1 {
+		t.Fatalf("tool results emitted = %d, want 1", len(sink.toolResults))
+	}
+	if sink.toolResults[0].FinalResponse != "send this reply" {
+		t.Fatalf("emitted final response = %q, want send this reply", sink.toolResults[0].FinalResponse)
+	}
+	if len(lifecycleEvents) != 2 {
+		t.Fatalf("lifecycle events = %d, want 2", len(lifecycleEvents))
+	}
+	if lifecycleEvents[0].Phase != model.ToolLifecycleStart ||
+		lifecycleEvents[1].Phase != model.ToolLifecycleFinish {
+		t.Fatalf("lifecycle phases = %#v, want start then finish", lifecycleEvents)
+	}
+}
+
+func TestRunnerFailedFinalResponseToolResultContinuesToFollowUp(t *testing.T) {
+	t.Parallel()
+
+	tool := &finalResponseTool{
+		output:        "tool failed",
+		finalResponse: "do not send this",
+		success:       false,
+	}
+	modelClient := &finalResponseModelClient{toolName: tool.Name()}
+	router, err := tools.NewRouter(tool)
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
+	runner, err := New(modelClient, router)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	result, err := runner.RunTurn(context.Background(), model.Turn{
+		ID:      "turn-failed-final-response",
+		History: []model.Item{model.UserInputItem("try the tool")},
+		Status:  model.TurnStatusRunning,
+	}, events.NopSink{})
+	if err != nil {
+		t.Fatalf("RunTurn() error = %v", err)
+	}
+
+	if modelClient.calls != 2 {
+		t.Fatalf("model calls = %d, want 2", modelClient.calls)
+	}
+	if result.FinalMessage != "follow-up after tool" {
+		t.Fatalf("FinalMessage = %q, want follow-up after tool", result.FinalMessage)
+	}
+	if !containsToolResult(result.History, "final-call", "tool failed") {
+		t.Fatalf("history missing failed tool result: %#v", result.History)
+	}
+	if containsAssistantMessage(result.History, "do not send this") {
+		t.Fatalf("history contains failed final response as assistant message: %#v", result.History)
 	}
 }
 

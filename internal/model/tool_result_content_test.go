@@ -284,9 +284,10 @@ func TestTruncateToolResultOutputBoundsTextAndPreservesMetadata(t *testing.T) {
 		Plan:        []PlanStep{{Step: "inspect", Status: PlanStepCompleted}},
 	}
 	got := TruncateToolResultOutput(ToolResult{
-		CallID: "call1",
-		Name:   "inspect",
-		Output: "0123456789abcdef",
+		CallID:        "call1",
+		Name:          "inspect",
+		Output:        "0123456789abcdef",
+		FinalResponse: "final reply should not be truncated",
 		Parts: []ContentPart{
 			{Kind: ContentPartText, Text: "alpha beta gamma delta"},
 			{Kind: ContentPartImage, ImageURL: "data:image/png;base64,BASE64", Detail: "high"},
@@ -299,9 +300,10 @@ func TestTruncateToolResultOutputBoundsTextAndPreservesMetadata(t *testing.T) {
 
 	wantOutput := "Warning: truncated tool output (original character count: 16)\n\n0123\n... 8 characters truncated ...\ncdef"
 	want := ToolResult{
-		CallID: "call1",
-		Name:   "inspect",
-		Output: wantOutput,
+		CallID:        "call1",
+		Name:          "inspect",
+		Output:        wantOutput,
+		FinalResponse: "final reply should not be truncated",
 		Parts: []ContentPart{
 			{
 				Kind: ContentPartText,
