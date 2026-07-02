@@ -56,6 +56,11 @@ type ToolResult struct {
 	// source-compatible while multimodal tools can adopt Codex behavior.
 	Parts   []ContentPart
 	Success bool
+	// FinalResponse, when non-empty on a successful tool result, is the
+	// user-visible assistant reply for the turn. The runner records and emits the
+	// ordinary tool result first, then stops without another model request and
+	// returns this string as TurnResult.FinalMessage.
+	FinalResponse string
 	// PlanUpdate carries the structured client event produced by the
 	// `update_plan` tool. Codex keeps this as a separate PlanUpdate event while
 	// still returning a model-visible tool output of "Plan updated"; Dexco

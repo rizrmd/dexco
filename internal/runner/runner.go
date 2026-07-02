@@ -363,6 +363,7 @@ func (r *Runner) RunTurnWithOptions(
 			turnState = attempt.turnState
 		}
 
+		finalResponse := ""
 		for _, toolResult := range attempt.toolResults {
 			for _, event := range toolResult.clientEvents {
 				if err := emitClientEvent(ctx, sink, event); err != nil {
@@ -398,6 +399,11 @@ func (r *Runner) RunTurnWithOptions(
 				}); err != nil {
 					return TurnResult{}, fmt.Errorf("emit tool result client event: %w", err)
 				}
+				if finalResponse == "" && modelVisibleResult.Success {
+					if response := strings.TrimSpace(modelVisibleResult.FinalResponse); response != "" {
+						finalResponse = response
+					}
+				}
 			} else {
 				history = append(history, toolResult.item)
 			}
@@ -414,6 +420,11 @@ func (r *Runner) RunTurnWithOptions(
 			// ensuring the follow-up request sees the user's latest steering.
 			history = append(history, pendingItems...)
 			attempt.needsFollowUp = true
+		}
+		if finalResponse != "" && len(pendingItems) == 0 {
+			result.FinalMessage = finalResponse
+			history = append(history, model.AssistantMessageItem(finalResponse))
+			break
 		}
 
 		// Codex loop parity: a model turn can complete a sampling request but
