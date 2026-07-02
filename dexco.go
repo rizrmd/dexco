@@ -169,6 +169,14 @@ func NewPermissionGrantStore() *PermissionGrantStore {
 }
 
 type Prompt = model.Prompt
+type HistoryProtectionMode = model.HistoryProtectionMode
+type HistoryProtectionConfig = model.HistoryProtectionConfig
+
+const (
+	HistoryProtectionDisabled            = model.HistoryProtectionDisabled
+	HistoryProtectionUntrustedTranscript = model.HistoryProtectionUntrustedTranscript
+)
+
 type UserInput = model.UserInput
 type AdditionalContextKind = model.AdditionalContextKind
 
@@ -375,6 +383,11 @@ type RunnerOptions struct {
 	// waits and tool executions. The runner owns timing; handlers provide only
 	// non-sensitive ProgressHint metadata through their guardrail payloads.
 	ProgressNarration ProgressNarrationConfig
+	// HistoryProtection declassifies prior conversation turns before they reach
+	// the model. Durable result history remains unchanged; only Prompt.History
+	// is rewritten so old user/assistant/tool text cannot act as higher-priority
+	// instructions or few-shot formatting examples.
+	HistoryProtection HistoryProtectionConfig
 }
 
 type Runner struct {
@@ -744,6 +757,7 @@ func internalRunnerOptions(options RunnerOptions) runner.Options {
 		ParallelTools:     options.ParallelTools,
 		Clock:             options.Clock,
 		ProgressNarration: model.ProgressNarrationConfig(options.ProgressNarration),
+		HistoryProtection: model.HistoryProtectionConfig(options.HistoryProtection),
 		Guardrails: runner.Guardrails{
 			ApprovalPolicy:   options.Guardrails.ApprovalPolicy,
 			Reviewer:         reviewer,

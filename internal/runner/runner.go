@@ -242,6 +242,7 @@ type Options struct {
 	ParallelTools     bool
 	Guardrails        Guardrails
 	ProgressNarration model.ProgressNarrationConfig
+	HistoryProtection model.HistoryProtectionConfig
 	// Clock exists so Codex timing parity tests can be deterministic. Production
 	// callers should leave it nil and use time.Now.
 	Clock func() time.Time
@@ -307,6 +308,8 @@ func (r *Runner) RunTurnWithOptions(
 	}
 
 	history := append([]model.Item(nil), turn.History...)
+	protectedInitialHistory, historyProtectionDeveloperMessages := model.ProtectPromptHistory(turn.History, r.options.HistoryProtection)
+	initialHistoryLen := len(turn.History)
 	turnState := ""
 	metrics := newTurnMetricsState(r.now)
 	guardrailDenials := &guardrailDenialCircuitBreaker{}
@@ -320,10 +323,14 @@ func (r *Runner) RunTurnWithOptions(
 		// conversation history plus current instructions and tool specs. Failed
 		// stream attempts never mutate this history, preserving prompt-cache and
 		// retry semantics.
+		promptHistory := append([]model.Item(nil), protectedInitialHistory...)
+		promptHistory = append(promptHistory, history[initialHistoryLen:]...)
+		promptDeveloperMessages := append([]string(nil), turn.DeveloperMessages...)
+		promptDeveloperMessages = append(promptDeveloperMessages, historyProtectionDeveloperMessages...)
 		prompt := model.Prompt{
-			History:           append([]model.Item(nil), history...),
+			History:           promptHistory,
 			Instructions:      turn.Instructions,
-			DeveloperMessages: append([]string(nil), turn.DeveloperMessages...),
+			DeveloperMessages: promptDeveloperMessages,
 			Tools:             r.router.Specs(),
 			TurnState:         turnState,
 			WebSearch:         model.CloneWebSearchRequest(turn.WebSearch),
