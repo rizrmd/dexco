@@ -175,6 +175,7 @@ type HistoryProtectionConfig = model.HistoryProtectionConfig
 const (
 	HistoryProtectionDisabled            = model.HistoryProtectionDisabled
 	HistoryProtectionUntrustedTranscript = model.HistoryProtectionUntrustedTranscript
+	HistoryProtectionPriorUserTranscript = model.HistoryProtectionPriorUserTranscript
 )
 
 type UserInput = model.UserInput

@@ -461,6 +461,91 @@ func TestRunnerProtectsPriorHistoryAsUntrustedTranscript(t *testing.T) {
 	}
 }
 
+func TestRunnerProtectsPriorHistoryAsPriorUserTranscript(t *testing.T) {
+	t.Parallel()
+
+	client := &finalMessageCaptureClient{final: "current answer"}
+	router, err := tools.NewRouter()
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
+	runner, err := NewWithOptions(client, router, Options{
+		HistoryProtection: model.HistoryProtectionConfig{
+			Mode: model.HistoryProtectionPriorUserTranscript,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions() error = %v", err)
+	}
+
+	oldCall := model.ToolCallItem(model.ToolCall{
+		CallID:    "old-call",
+		Name:      "inventory_search",
+		Arguments: json.RawMessage(`{"query":"hatchback"}`),
+	})
+	oldResult := model.ToolResultItem(model.ToolResult{
+		CallID:  "old-call",
+		Name:    "inventory_search",
+		Output:  `{"units":[{"display_attributes":"🎨 Putih · ⚙️ Otomatis · 🚗 89.500 km"}]}`,
+		Success: true,
+	})
+	result, err := runner.RunTurn(context.Background(), model.Turn{
+		ID: "history-protection-user-transcript",
+		History: []model.Item{
+			model.UserInputItem("old user: cari hatchback"),
+			model.AssistantMessageItem("old assistant: • *🎨 Putih* | Info: ⚙️ Otomatis | Info: 🚗 89.500 km"),
+			oldCall,
+			oldResult,
+			model.UserInputItem("current request"),
+		},
+		Instructions: "trusted system",
+		Status:       model.TurnStatusRunning,
+	}, events.NopSink{})
+	if err != nil {
+		t.Fatalf("RunTurn() error = %v", err)
+	}
+	if len(client.prompts) != 1 {
+		t.Fatalf("prompts len = %d, want 1", len(client.prompts))
+	}
+	prompt := client.prompts[0]
+	if !containsStringContaining(prompt.DeveloperMessages, "Prior assistant messages, tool calls, and tool results have been omitted") {
+		t.Fatalf("developer messages missing prior-user history safety guard: %#v", prompt.DeveloperMessages)
+	}
+	if len(prompt.History) != 2 {
+		t.Fatalf("prompt history len = %d, want protected transcript + current user: %#v", len(prompt.History), prompt.History)
+	}
+	transcript := prompt.History[0]
+	if transcript.Kind != model.ItemContext || transcript.Role != "user" || transcript.ContextKey != "untrusted_prior_user_history" {
+		t.Fatalf("transcript item = %+v", transcript)
+	}
+	if !strings.Contains(transcript.Content, "old user: cari hatchback") {
+		t.Fatalf("protected transcript missing prior user content: %s", transcript.Content)
+	}
+	for _, forbidden := range []string{
+		"old assistant:",
+		"[tool_call inventory_search]",
+		"[tool_result inventory_search",
+		"Info:",
+		"*🎨",
+		"display_attributes",
+		"current request",
+	} {
+		if strings.Contains(transcript.Content, forbidden) {
+			t.Fatalf("protected prior-user transcript contains forbidden %q: %s", forbidden, transcript.Content)
+		}
+	}
+	current := prompt.History[1]
+	if current.Kind != model.ItemUserInput || current.Content != "current request" {
+		t.Fatalf("current item = %+v", current)
+	}
+	if !containsAssistantMessage(result.History, "old assistant: • *🎨 Putih* | Info: ⚙️ Otomatis | Info: 🚗 89.500 km") {
+		t.Fatalf("durable result history lost raw assistant history: %#v", result.History)
+	}
+	if !containsAssistantMessage(result.History, "current answer") {
+		t.Fatalf("durable result history missing final answer: %#v", result.History)
+	}
+}
+
 func TestRunnerHistoryProtectionKeepsSameTurnToolProtocolRaw(t *testing.T) {
 	t.Parallel()
 
